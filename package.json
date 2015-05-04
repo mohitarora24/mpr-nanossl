@@ -1,0 +1,39 @@
+{
+    "name": "mpr-nanossl",
+    "title": "NanoSSL support",
+    "description": "NanoSSL Support for the MPR",
+    "version": "0.1.0",
+    "keywords": [
+        "me",
+        "ssl",
+        "nanossl"
+    ],
+    "author": {
+        "name": "Embedthis Software",
+        "email": "dev@embedthis.com",
+        "url": "https://embedthis.com"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git://github.com/embedthis/mpr-nanossl.git"
+    },
+    "bugs": {
+        "url": "http://github.com/embedthis/mpr-nanossl/issues"
+    },
+    "licenses": [
+        {
+            "type": "GPL",
+            "url": "http://www.gnu.org/licenses/gpl-2.0.html"
+        },
+        {
+            "type": "Commercial",
+            "url": "https://embedthis.com/licensing/"
+        }
+    ],
+    "pak": {
+        "export": [
+            "*.c",
+            "*.me"
+        ]
+    }
+}
