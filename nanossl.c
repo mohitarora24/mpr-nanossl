@@ -343,20 +343,7 @@ static int nanoHandshake(MprSocket *sp)
             return MPR_ERR_BAD_STATE;
         }
     }
-#if UNSUPPORTED
-{
-    ubyte4 flags;
-    SSL_getSessionFlags(np->handle, &flags);
-    if (sp->ssl->verifyPeer) {
-        flags |= SSL_FLAG_REQUIRE_MUTUAL_AUTH;
-    } else {
-        flags |= SSL_FLAG_NO_MUTUAL_AUTH_REQUEST;
-    }
-    SSL_setSessionFlags(np->handle, flags);
-}
-#endif
     rc = 0;
-
     while (!np->connected) {
         if ((rc = SSL_negotiateConnection(np->handle)) < 0) {
             break;
