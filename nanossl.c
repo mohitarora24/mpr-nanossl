@@ -1,15 +1,36 @@
 /*
     nanossl.c - Mocana NanoSSL
 
-    Copyright (c) All Rights Reserved. See details at the end of the file.
+    This is the interface between the MPR Socket layer and the NanoSSL stack.
 
-    WARNING: This code has not been updated and may or may not work.
+    This software is supplied as-is. It is not supported under an Embedthis Commerical License or
+    Appweb Maintenance Agreement.
+
+    At a minimum, the following should be defined in NanoSSL src/common/moptions_custom.h
+
+    #define __ENABLE_MOCANA_SSL_SERVER__                1
+    #define __ENABLE_MOCANA_PEM_CONVERSION__            1
+    #define __MOCANA_DUMP_CONSOLE_TO_STDOUT__           1
+    #define __ENABLE_MOCANA_SSL_CIPHER_SUITES_SELECT__  1
+
+    #if ME_DEBUG
+    #define __ENABLE_ALL_DEBUGGING__                    1
+    #define __ENABLE_MOCANA_DEBUG_CONSOLE__             1
+    #endif
+
+    Notes:
+    - NanoSSL does not support virtual servers or multiple configurations
+    - NanoSSL sometimes returns invalid ASN.1 to clients
+    - This module does not support client certification or verification of client certificates
+
+    Copyright (c) All Rights Reserved. See details at the end of the file.
  */
 
 /********************************** Includes **********************************/
 
-#include    "mpr.h"
+#include    "me.h"
 
+#if ME_COM_NANOSSL
 #if WINDOWS
     #define __RTOS_WIN32__
 #elif MACOSX
@@ -20,16 +41,11 @@
     #define __RTOS_LINUX__
 #endif
 
-#define __ENABLE_MOCANA_SSL_SERVER__        1
-#define __ENABLE_MOCANA_PEM_CONVERSION__    1
-#define __ENABLE_ALL_DEBUGGING__            1
-#define __ENABLE_MOCANA_DEBUG_CONSOLE__     1
-#define __MOCANA_DUMP_CONSOLE_TO_STDOUT__   1
+#include  "mpr.h"
 
 /*
     Indent includes to bypass MakeMe dependencies
  */
-#if ME_COM_NANOSSL
  #include "common/moptions.h"
  #include "common/mdefs.h"
  #include "common/mtypes.h"
@@ -47,12 +63,18 @@
  #include "asn1/oiddefs.h"
 
 /************************************* Defines ********************************/
+
+#define KEY_SIZE        1024
+#define MAX_CIPHERS     32
+
 /*
     Per-route SSL configuration
  */
 typedef struct NanoConfig {
     certDescriptor  cert;
     certDescriptor  ca;
+    ubyte2          ciphers[MAX_CIPHERS];
+    int             ciphersCount;
 } NanoConfig;
 
 /*
@@ -60,45 +82,38 @@ typedef struct NanoConfig {
  */
 typedef struct NanoSocket {
     MprSocket       *sock;
-    NanoConfig       *cfg;
+    NanoConfig      *cfg;
     sbyte4          handle;
     int             connected;
 } NanoSocket;
 
 static MprSocketProvider *nanoProvider;
-static NanoConfig *defaultNanoConfig;
+static NanoConfig *nanoConfig;
 
 #if ME_DEBUG
-    #define SSL_HELLO_TIMEOUT   15000
-    #define SSL_RECV_TIMEOUT    300000
-#else
     #define SSL_HELLO_TIMEOUT   15000000
     #define SSL_RECV_TIMEOUT    30000000
+#else
+    #define SSL_HELLO_TIMEOUT   15000
+    #define SSL_RECV_TIMEOUT    300000
 #endif
-
-#define KEY_SIZE                1024
-#define MAX_CIPHERS             16
 
 /***************************** Forward Declarations ***************************/
 
 static void     nanoClose(MprSocket *sp, bool gracefully);
 static void     nanoDisconnect(MprSocket *sp);
-static Socket   nanoListen(MprSocket *sp, cchar *host, int port, int flags);
 static void     nanoLog(sbyte4 module, sbyte4 severity, sbyte *msg);
 static void     manageNanoConfig(NanoConfig *cfg, int flags);
 static void     manageNanoProvider(MprSocketProvider *provider, int flags);
 static void     manageNanoSocket(NanoSocket *ssp, int flags);
 static ssize    nanoRead(MprSocket *sp, void *buf, ssize len);
-static int      setNanoCiphers(MprSocket *sp, cchar *cipherSuite);
+static int      computeNanoCiphers(MprSsl *ssl);
 static int      nanoUpgrade(MprSocket *sp, MprSsl *sslConfig, cchar *peerName);
 static ssize    nanoWrite(MprSocket *sp, cvoid *buf, ssize len);
 
-static void     DEBUG_PRINT(void *where, void *msg);
-static void     DEBUG_PRINTNL(void *where, void *msg);
-
 /************************************* Code ***********************************/
 /*
-    Create the Openssl module. This is called only once
+    Create the NanoSSL module. This is called only once.
  */
 PUBLIC int mprSslInit(void *unused, MprModule *module)
 {
@@ -114,9 +129,6 @@ PUBLIC int mprSslInit(void *unused, MprModule *module)
     nanoProvider->writeSocket = nanoWrite;
     mprAddSocketProvider("nanossl", nanoProvider);
 
-    if ((defaultNanoConfig = mprAllocObj(NanoConfig, manageNanoConfig)) == 0) {
-        return MPR_ERR_MEMORY;
-    }
     if (MOCANA_initMocana() < 0) {
         mprLog("error nanossl", 0, "initialization failed");
         return MPR_ERR_CANT_INITIALIZE;
@@ -137,10 +149,8 @@ static void manageNanoProvider(MprSocketProvider *provider, int flags)
 {
     if (flags & MPR_MANAGE_MARK) {
         mprMark(provider->name);
-        mprMark(defaultNanoConfig);
 
     } else if (flags & MPR_MANAGE_FREE) {
-        defaultNanoConfig = 0;
         SSL_releaseTables();
         MOCANA_freeMocana();
     }
@@ -152,7 +162,14 @@ static void manageNanoConfig(NanoConfig *cfg, int flags)
     if (flags & MPR_MANAGE_MARK) {
         ;
     } else if (flags & MPR_MANAGE_FREE) {
-        CA_MGMT_freeCertificate(&cfg->cert);
+        if (cfg->cert.certLength > 0) {
+            CA_MGMT_freeCertificate(&cfg->cert);
+            cfg->cert.certLength = 0;
+        }
+        if (cfg->ca.certLength > 0) {
+            CA_MGMT_freeCertificate(&cfg->ca);
+            cfg->ca.certLength = 0;
+        }
     }
 }
 
@@ -192,9 +209,10 @@ static void nanoClose(MprSocket *sp, bool gracefully)
  */
 static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
 {
-    NanoSocket   *np;
-    NanoConfig   *cfg;
+    NanoSocket  *np;
+    NanoConfig  *cfg;
     int         rc;
+    ubyte4      ecurves;
 
     assert(sp);
 
@@ -209,12 +227,15 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
     sp->ssl = ssl;
 
     lock(ssl);
-    if (ssl->config && !ssl->changed) {
+    if (ssl->config) {
         np->cfg = cfg = ssl->config;
+
+    } else if (nanoConfig) {
+        np->cfg = cfg = ssl->config = nanoConfig;
+
     } else {
-        ssl->changed = 0;
         /*
-            One time setup for the SSL configuration for this MprSsl
+            One time setup for the SSL configuration
          */
         if ((cfg = mprAllocObj(NanoConfig, manageNanoConfig)) == 0) {
             unlock(ssl);
@@ -228,7 +249,6 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
                 unlock(ssl);
                 return MPR_ERR_CANT_READ;
             }
-            assert(__ENABLE_MOCANA_PEM_CONVERSION__);
             if ((rc = CA_MGMT_decodeCertificate(tmp.pCertificate, tmp.certLength, &cfg->cert.pCertificate, 
                     &cfg->cert.certLength)) < 0) {
                 mprLog("error nanossl", 0, "Unable to decode PEM certificate %s", ssl->certFile); 
@@ -245,8 +265,8 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
                 CA_MGMT_freeCertificate(&cfg->cert);
                 unlock(ssl);
             }
-            if ((rc = CA_MGMT_convertKeyPEM(tmp.pKeyBlob, tmp.keyBlobLength, 
-                    &cfg->cert.pKeyBlob, &cfg->cert.keyBlobLength)) < 0) {
+            if ((rc = CA_MGMT_convertKeyPEM(tmp.pKeyBlob, tmp.keyBlobLength, &cfg->cert.pKeyBlob, 
+                    &cfg->cert.keyBlobLength)) < 0) {
                 mprLog("error nanossl", 0, "Unable to decode PEM key file %s", ssl->keyFile); 
                 CA_MGMT_freeCertificate(&tmp);
                 unlock(ssl);
@@ -271,12 +291,18 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
             }
             MOCANA_freeReadFile(&tmp.pCertificate);
         }
-        if (SSL_initServerCert(&cfg->cert, FALSE, 0)) {
+        ecurves = 1 << tlsExtNamedCurves_secp256r1;
+        if (SSL_initServerCert(&cfg->cert, FALSE, ecurves)) {
             mprLog("error nanossl", 0, "SSL_initServerCert failed");
             unlock(ssl);
             return MPR_ERR_CANT_INITIALIZE;
         }
-        np->cfg = ssl->config = cfg;
+        nanoConfig = np->cfg = ssl->config = cfg;
+
+        if (computeNanoCiphers(ssl) < 0) {
+            unlock(ssl);
+            return MPR_ERR_CANT_INITIALIZE;
+        }
     }
     unlock(ssl);
 
@@ -284,8 +310,6 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
         if ((np->handle = SSL_acceptConnection(sp->fd)) < 0) {
             return -1;
         }
-    } else {
-        mprLog("error nanossl", 0, "does not support client side SSL");
     }
     return 0;
 }
@@ -297,42 +321,6 @@ static void nanoDisconnect(MprSocket *sp)
 }
 
 
-static void checkCert(MprSocket *sp)
-{
-    NanoSocket  *np;
-    MprCipher   *cp;
-    MprSsl      *ssl;
-    ubyte2      cipher;
-    ubyte4      ecurve;
-   
-    ssl = sp->ssl;
-    np = (NanoSocket*) sp->sslSocket;
-
-    if (ssl->caFile) {
-        mprLog("info mpr ssl nanossl", 4, "Using certificates from %s", ssl->caFile);
-    } else if (ssl->caPath) {
-        mprLog("info mpr ssl nanossl", 4, "Using certificates from directory %s", ssl->caPath);
-    }
-    /*
-        Trace cipher being used
-     */
-    if (SSL_getCipherInfo(np->handle, &cipher, &ecurve) < 0) {
-        mprLog("error mpr ssl nanossl", 0, "Cannot get cipher info");
-        return;
-    }
-    for (cp = mprCiphers; cp->name; cp++) {
-        if (cp->code == cipher) {
-            break;
-        }
-    }
-    if (cp) {
-        mprLog("info mpr ssl nanossl", 0, "Connected using cipher: %s, %x", cp->name, (int) cipher);
-    } else {
-        mprLog("info mpr ssl nanossl", 0, "Connected using cipher: %x", (int) cipher);
-    }
-}
-
-
 /*
     Initiate or continue SSL handshaking with the peer. This routine does not block.
     Return -1 on errors, 0 incomplete and awaiting I/O, 1 if successful
@@ -340,14 +328,24 @@ static void checkCert(MprSocket *sp)
 static int nanoHandshake(MprSocket *sp)
 {
     NanoSocket  *np;
-    ubyte4      flags;
+    NanoConfig  *cfg;
+    ubyte4      ecurve;
+    ubyte2      cipher;
     int         rc;
 
     np = (NanoSocket*) sp->sslSocket;
+    cfg = np->cfg;
     sp->flags |= MPR_SOCKET_HANDSHAKING;
-    if (setNanoCiphers(sp, sp->ssl->ciphers) < 0) {
-        return 0;
+
+    if (cfg->ciphersCount > 0) {
+        if (SSL_enableCiphers(np->handle, cfg->ciphers, cfg->ciphersCount) < 0) {
+            mprLog("error nanossl", 0, "Requested cipher suite %s is not supported by this provider", sp->ssl->ciphers);
+            return MPR_ERR_BAD_STATE;
+        }
     }
+#if UNSUPPORTED
+{
+    ubyte4 flags;
     SSL_getSessionFlags(np->handle, &flags);
     if (sp->ssl->verifyPeer) {
         flags |= SSL_FLAG_REQUIRE_MUTUAL_AUTH;
@@ -355,6 +353,8 @@ static int nanoHandshake(MprSocket *sp)
         flags |= SSL_FLAG_NO_MUTUAL_AUTH_REQUEST;
     }
     SSL_setSessionFlags(np->handle, flags);
+}
+#endif
     rc = 0;
 
     while (!np->connected) {
@@ -362,6 +362,7 @@ static int nanoHandshake(MprSocket *sp)
             break;
         }
         np->connected = 1;
+        sp->secured = 1;
         break;
     }
     sp->flags &= ~MPR_SOCKET_HANDSHAKING;
@@ -372,21 +373,30 @@ static int nanoHandshake(MprSocket *sp)
     if (rc < 0) {
         if (rc == ERR_SSL_UNKNOWN_CERTIFICATE_AUTHORITY) {
             sp->errorMsg = sclone("Unknown certificate authority");
-
-        /* Common name mismatch, cert revoked */
+        } else if (rc == ERR_SSL_NO_CIPHER_MATCH) {
+            sp->errorMsg = sclone("No cipher match");
         } else if (rc == ERR_SSL_PROTOCOL_PROCESS_CERTIFICATE) {
             sp->errorMsg = sclone("Bad certificate");
         } else if (rc == ERR_SSL_NO_SELF_SIGNED_CERTIFICATES) {
             sp->errorMsg = sclone("Self-signed certificate");
         } else if (rc == ERR_SSL_CERT_VALIDATION_FAILED) {
             sp->errorMsg = sclone("Certificate does not validate");
+        } else if (rc == ERR_TCP_SOCKET_CLOSED) {
+            sp->errorMsg = sclone("Peer closed connection");
+        } else {
+            sp->errorMsg = sclone("NanoSSL error");
         }
-        DISPLAY_ERROR(0, rc); 
-        mprLog("error mpr ssl nanossl", 4, "Cannot handshake: error %d", rc);
+        mprLog("error mpr ssl nanossl", 4, "Cannot handshake: %s, error %d", sp->errorMsg, rc);
         errno = EPROTO;
+        sp->flags |= MPR_SOCKET_EOF;
         return -1;
     }
-    checkCert(sp);
+    if (SSL_getCipherInfo(np->handle, &cipher, &ecurve) < 0) {
+        mprLog("error mpr ssl nanossl", 0, "Cannot get cipher info");
+        sp->flags |= MPR_SOCKET_EOF;
+        return -1;
+    }
+    sp->cipher = sclone(mprGetSslCipherName(cipher));
     return 1;
 }
 
@@ -449,14 +459,14 @@ static ssize nanoWrite(MprSocket *sp, cvoid *buf, ssize len)
     rc = 0;
     do {
         rc = sent = SSL_send(np->handle, (sbyte*) buf, (int) len);
-        mprLog("info mpr ssl nanossl", 5, "written %d, requested len %d", sent, len);
+        mprLog("info mpr ssl nanossl", 5, "written %d, requested len %ld", sent, len);
         if (rc <= 0) {
             break;
         }
         totalWritten += sent;
         buf = (void*) ((char*) buf + sent);
         len -= sent;
-        mprLog("info mpr ssl nanossl", 5, "write: len %d, written %d, total %d", len, sent, totalWritten);
+        mprLog("info mpr ssl nanossl", 5, "write: len %ld, written %d, total %ld", len, sent, totalWritten);
     } while (len > 0);
 
     SSL_sendPending(np->handle, &count);
@@ -468,47 +478,30 @@ static ssize nanoWrite(MprSocket *sp, cvoid *buf, ssize len)
 }
 
 
-static int setNanoCiphers(MprSocket *sp, cchar *cipherSuite)
+static int computeNanoCiphers(MprSsl *ssl)
 {
-    NanoSocket  *np;
+    NanoConfig  *cfg;
     char        *suite, *cipher, *next;
-    ubyte2      *ciphers;
     int         count, cipherCode;
 
-
-    np = sp->sslSocket;
-    ciphers = mprAlloc((MAX_CIPHERS + 1) * sizeof(ubyte2));
-
-    if (!cipherSuite || cipherSuite[0] == '\0') {
-        return 0;
-    }
-    suite = strdup(cipherSuite);
-    count = 0;
-    while ((cipher = stok(suite, ":, \t", &next)) != 0 && count < MAX_CIPHERS) {
-        if ((cipherCode = mprGetSslCipherCode(cipher)) < 0) {
-            mprLog("error nanossl", 0, "Requested cipher %s is not supported by this provider", cipher);
-        } else {
-            ciphers[count++] = cipherCode;
+    if (ssl->ciphers) {
+        cfg = ssl->config;
+        mprLog("info openssl", 5, "Using SSL ciphers: %s", ssl->ciphers);
+        next = sclone(ssl->ciphers);
+        count = 0;
+        while ((cipher = stok(next, ":, \t", &next)) != 0 && count < MAX_CIPHERS) {
+            if ((cipherCode = mprGetSslCipherCode(cipher)) < 0) {
+                mprLog("error nanossl", 0, "Unknown cipher %s", cipher);
+            } else {
+                cfg->ciphers[count++] = cipherCode;
+            }
+            suite = 0;
         }
-        suite = 0;
-    }
-    if (SSL_enableCiphers(np->handle, ciphers, count) < 0) {
-        mprLog("error nanossl", 0, "Requested cipher suite %s is not supported by this provider", cipherSuite);
-        return MPR_ERR_BAD_STATE;
+        cfg->ciphersCount = count;
     }
     return 0;
 }
 
-
-static void DEBUG_PRINT(void *where, void *msg)
-{
-    mprLog("mpr ssl nanossl", 4, "%s", msg);
-}
-
-static void DEBUG_PRINTNL(void *where, void *msg)
-{
-    mprLog("mpr ssl nanossl", 4, "%s", msg);
-}
 
 static void nanoLog(sbyte4 module, sbyte4 severity, sbyte *msg)
 {
