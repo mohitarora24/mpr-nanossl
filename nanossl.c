@@ -98,8 +98,95 @@ static NanoConfig *nanoConfig;
     #define SSL_RECV_TIMEOUT    300000
 #endif
 
+typedef struct Cipher {
+    int     code;
+    cchar   *name;
+} Cipher;
+
+/*
+    See: http://www.iana.org/assignments/tls-parameters/tls-parameters.xml
+*/
+static Cipher cipherList[] = {
+    { 0x0001, "SSL_RSA_WITH_NULL_MD5" },
+    { 0x0002, "SSL_RSA_WITH_NULL_SHA" },
+    { 0x0004, "TLS_RSA_WITH_RC4_128_MD5" },
+    { 0x0005, "TLS_RSA_WITH_RC4_128_SHA" },
+    { 0x0009, "SSL_RSA_WITH_DES_CBC_SHA" },
+    { 0x000A, "SSL_RSA_WITH_3DES_EDE_CBC_SHA" },
+    { 0x0015, "SSL_DHE_RSA_WITH_DES_CBC_SHA" },
+    { 0x0016, "SSL_DHE_RSA_WITH_3DES_EDE_CBC_SHA" },
+    { 0x001A, "SSL_DH_ANON_WITH_DES_CBC_SHA" },
+    { 0x001B, "SSL_DH_ANON_WITH_3DES_EDE_CBC_SHA" },
+    { 0x002F, "TLS_RSA_WITH_AES_128_CBC_SHA" },
+    { 0x0033, "TLS_DHE_RSA_WITH_AES_128_CBC_SHA" },
+    { 0x0034, "TLS_DH_ANON_WITH_AES_128_CBC_SHA" },
+    { 0x0035, "TLS_RSA_WITH_AES_256_CBC_SHA" },
+    { 0x0039, "TLS_DHE_RSA_WITH_AES_256_CBC_SHA" },
+    { 0x003A, "TLS_DH_ANON_WITH_AES_256_CBC_SHA" },
+    { 0x003B, "SSL_RSA_WITH_NULL_SHA256" },
+    { 0x003C, "TLS_RSA_WITH_AES_128_CBC_SHA256" },
+    { 0x003D, "TLS_RSA_WITH_AES_256_CBC_SHA256" },
+    { 0x0041, "TLS_RSA_WITH_CAMELLIA_128_CBC_SHA" },
+    { 0x0067, "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256" },
+    { 0x006B, "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256" },
+    { 0x006C, "TLS_DH_ANON_WITH_AES_128_CBC_SHA256" },
+    { 0x006D, "TLS_DH_ANON_WITH_AES_256_CBC_SHA256" },
+    { 0x0084, "TLS_DHE_RSA_WITH_CAMELLIA_256_CBC_SHA" },
+    { 0x0088, "TLS_RSA_WITH_CAMELLIA_256_CBC_SHA" },
+    { 0x008B, "TLS_PSK_WITH_3DES_EDE_CBC_SHA" },
+    { 0x008C, "TLS_PSK_WITH_AES_128_CBC_SHA" },
+    { 0x008D, "TLS_PSK_WITH_AES_256_CBC_SHA" },
+    { 0x008F, "SSL_DHE_PSK_WITH_3DES_EDE_CBC_SHA" },
+    { 0x0090, "TLS_DHE_PSK_WITH_AES_128_CBC_SHA" },
+    { 0x0091, "TLS_DHE_PSK_WITH_AES_256_CBC_SHA" },
+    { 0x0093, "TLS_RSA_PSK_WITH_3DES_EDE_CBC_SHA" },
+    { 0x009F, "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" },
+    { 0x0094, "TLS_RSA_PSK_WITH_AES_128_CBC_SHA" },
+    { 0x0095, "TLS_RSA_PSK_WITH_AES_256_CBC_SHA" },
+    { 0xC001, "TLS_ECDH_ECDSA_WITH_NULL_SHA" },
+    { 0xC003, "SSL_ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA" },
+    { 0xC004, "TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA" },
+    { 0xC005, "TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA" },
+    { 0xC006, "TLS_ECDHE_ECDSA_WITH_NULL_SHA" },
+    { 0xC008, "SSL_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA" },
+    { 0xC009, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA" },
+    { 0xC00A, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA" },
+    { 0xC00B, "TLS_ECDH_RSA_WITH_NULL_SHA" },
+    { 0xC00D, "SSL_ECDH_RSA_WITH_3DES_EDE_CBC_SHA" },
+    { 0xC00E, "TLS_ECDH_RSA_WITH_AES_128_CBC_SHA" },
+    { 0xC00F, "TLS_ECDH_RSA_WITH_AES_256_CBC_SHA" },
+    { 0xC010, "TLS_ECDHE_RSA_WITH_NULL_SHA" },
+    { 0xC012, "SSL_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA" },
+    { 0xC013, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA" },
+    { 0xC014, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA" },
+    { 0xC015, "TLS_ECDH_anon_WITH_NULL_SHA" },
+    { 0xC017, "SSL_ECDH_anon_WITH_3DES_EDE_CBC_SHA" },
+    { 0xC018, "TLS_ECDH_anon_WITH_AES_128_CBC_SHA" },
+    { 0xC019, "TLS_ECDH_anon_WITH_AES_256_CBC_SHA " },
+    { 0xC023, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256" },
+    { 0xC024, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384" },
+    { 0xC025, "TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA256" },
+    { 0xC026, "TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA384" },
+    { 0xC027, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256" },
+    { 0xC028, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384" },
+    { 0xC029, "TLS_ECDH_RSA_WITH_AES_128_CBC_SHA256" },
+    { 0xC02A, "TLS_ECDH_RSA_WITH_AES_256_CBC_SHA384" },
+    { 0xC02B, "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" },
+    { 0xC02C, "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" },
+    { 0xC02D, "TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256" },
+    { 0xC02E, "TLS_ECDH_ECDSA_WITH_AES_256_GCM_SHA384" },
+    { 0xC02F, "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" },
+    { 0xC030, "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" },
+    { 0xC031, "TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256" },
+    { 0xC032, "TLS_ECDH_RSA_WITH_AES_256_GCM_SHA384" },
+    { 0xFFF0, "TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8" },
+    { 0x0, 0 },
+};
+
 /***************************** Forward Declarations ***************************/
 
+static int      getCipherCode(cchar *cipher);
+static cchar    *getCipherName(int code);
 static void     nanoClose(MprSocket *sp, bool gracefully);
 static void     nanoDisconnect(MprSocket *sp);
 static void     nanoLog(sbyte4 module, sbyte4 severity, sbyte *msg);
@@ -383,7 +470,7 @@ static int nanoHandshake(MprSocket *sp)
         sp->flags |= MPR_SOCKET_EOF;
         return -1;
     }
-    sp->cipher = sclone(mprGetSslCipherName(cipher));
+    sp->cipher = sclone(getCipherName(cipher));
     return 1;
 }
 
@@ -477,7 +564,7 @@ static int computeNanoCiphers(MprSsl *ssl)
         next = sclone(ssl->ciphers);
         count = 0;
         while ((cipher = stok(next, ":, \t", &next)) != 0 && count < MAX_CIPHERS) {
-            if ((cipherCode = mprGetSslCipherCode(cipher)) < 0) {
+            if ((cipherCode = getCipherCode(cipher)) < 0) {
                 mprLog("error nanossl", 0, "Unknown cipher %s", cipher);
             } else {
                 cfg->ciphers[count++] = cipherCode;
@@ -485,6 +572,32 @@ static int computeNanoCiphers(MprSsl *ssl)
             suite = 0;
         }
         cfg->ciphersCount = count;
+    }
+    return 0;
+}
+
+
+static int getCipherCode(cchar *cipher)
+{
+    Cipher   *cp;
+
+    for (cp = cipherList; cp->name; cp++) {
+        if (smatch(cp->name, cipher)) {
+            return cp->code;
+        }
+    }
+    return MPR_ERR_CANT_FIND;
+}
+
+
+static cchar *getCipherName(int code)
+{
+    Cipher   *cp;
+
+    for (cp = cipherList; cp->name; cp++) {
+        if (cp->code == code) {
+            return cp->name;
+        }
     }
     return 0;
 }
