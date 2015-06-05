@@ -21,7 +21,7 @@
     Notes:
     - NanoSSL does not support virtual servers or multiple configurations
     - NanoSSL sometimes returns invalid ASN.1 to clients
-    - This module does not support client certification or verification of client certificates
+    - This module does not support verification of client certificates
 
     Copyright (c) All Rights Reserved. See details at the end of the file.
  */
@@ -189,7 +189,9 @@ static int      getCipherCode(cchar *cipher);
 static cchar    *getCipherName(int code);
 static void     nanoClose(MprSocket *sp, bool gracefully);
 static void     nanoDisconnect(MprSocket *sp);
+static ssize    nanoFlush(MprSocket *sp);
 static void     nanoLog(sbyte4 module, sbyte4 severity, sbyte *msg);
+static char     *nanoState(MprSocket *sp);
 static void     manageNanoConfig(NanoConfig *cfg, int flags);
 static void     manageNanoProvider(MprSocketProvider *provider, int flags);
 static void     manageNanoSocket(NanoSocket *ssp, int flags);
@@ -212,6 +214,8 @@ PUBLIC int mprSslInit(void *unused, MprModule *module)
     nanoProvider->upgradeSocket = nanoUpgrade;
     nanoProvider->closeSocket = nanoClose;
     nanoProvider->disconnectSocket = nanoDisconnect;
+    nanoProvider->flushSocket = nanoFlush;
+    nanoProvider->socketState = nanoState;
     nanoProvider->readSocket = nanoRead;
     nanoProvider->writeSocket = nanoWrite;
     mprAddSocketProvider("nanossl", nanoProvider);
@@ -361,6 +365,7 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
             }
             MOCANA_freeReadFile(&tmp.pKeyBlob);    
         }
+#if FUTURE
         if (ssl->caFile) {
             certDescriptor tmp;
             if ((rc = MOCANA_readFile((sbyte*) ssl->caFile, &tmp.pCertificate, &tmp.certLength)) < 0) {
@@ -378,6 +383,7 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
             }
             MOCANA_freeReadFile(&tmp.pCertificate);
         }
+#endif
         ecurves = 1 << tlsExtNamedCurves_secp256r1;
         if (SSL_initServerCert(&cfg->cert, FALSE, ecurves)) {
             mprLog("error nanossl", 0, "SSL_initServerCert failed");
@@ -405,6 +411,18 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
 static void nanoDisconnect(MprSocket *sp)
 {
     sp->service->standardProvider->disconnectSocket(sp);
+}
+
+
+static ssize nanoFlush(MprSocket *sp)
+{
+    return 0;
+}
+
+
+static char *nanoState(MprSocket *sp)
+{
+    return "";
 }
 
 
