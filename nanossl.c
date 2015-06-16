@@ -211,6 +211,7 @@ PUBLIC int mprSslInit(void *unused, MprModule *module)
     if ((nanoProvider = mprAllocObj(MprSocketProvider, manageNanoProvider)) == NULL) {
         return MPR_ERR_MEMORY;
     }
+    nanoProvider->name = sclone("nanossl");
     nanoProvider->upgradeSocket = nanoUpgrade;
     nanoProvider->closeSocket = nanoClose;
     nanoProvider->disconnectSocket = nanoDisconnect;
@@ -218,7 +219,7 @@ PUBLIC int mprSslInit(void *unused, MprModule *module)
     nanoProvider->socketState = nanoState;
     nanoProvider->readSocket = nanoRead;
     nanoProvider->writeSocket = nanoWrite;
-    mprAddSocketProvider("nanossl", nanoProvider);
+    mprSetSslProvider(nanoProvider);
 
     if (MOCANA_initMocana() < 0) {
         mprLog("error nanossl", 0, "initialization failed");
