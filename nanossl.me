@@ -6,11 +6,11 @@ Me.load({
     targets: {
         nanossl: {
             description: 'Mocana NanoSSL',
-            libname: 'libmpr-nanossl',
             config: function (target) {
+                let libname = 'libmpr-nanossl'
                 if (me.options.gen) {
                     return {
-                        path: me.dir.bin.join(target.libname).joinExt(me.ext.lib),
+                        path: me.dir.bin.join(libname).joinExt(me.ext.lib),
                         includes: [ '$(ME_COM_NANOSSL_PATH)/src' ],
                         libpaths: [ '$(ME_COM_NANOSSL_PATH)/bin' ],
                         libraries: [ 'libssls' ],
@@ -22,7 +22,7 @@ Me.load({
                 let incdir = probe('common/moptions.h', {search: [path.join('src')]}).absolute
                 return {
                     location:  path,
-                    path:      me.dir.bin.join(target.libname).joinExt(me.ext.lib),
+                    path:      me.dir.bin.join(libname).joinExt(me.ext.lib),
                     includes:  [ incdir, me.dir.inc ],
                     libpaths:  [ lib.dirname ],
                     libraries: [ 'libssls' ],
