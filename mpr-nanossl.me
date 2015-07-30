@@ -1,5 +1,5 @@
 /*
-    nanossl.me -- Mocana NanoSSL Component
+    mpr-nanossl.me -- Mocana NanoSSL Component
  */
 
 Me.load({ 
@@ -10,7 +10,6 @@ Me.load({
                 let libname = 'libmpr-nanossl'
                 if (me.options.gen) {
                     return {
-                        path: me.dir.bin.join(libname).joinExt(me.ext.lib),
                         includes: [ '$(ME_COM_NANOSSL_PATH)/src' ],
                         libpaths: [ '$(ME_COM_NANOSSL_PATH)/bin' ],
                         libraries: [ 'libssls' ],
@@ -22,7 +21,6 @@ Me.load({
                 let incdir = probe('common/moptions.h', {search: [path.join('src')]}).absolute
                 return {
                     location:  path,
-                    path:      me.dir.bin.join(libname).joinExt(me.ext.lib),
                     includes:  [ incdir, me.dir.inc ],
                     libpaths:  [ lib.dirname ],
                     libraries: [ 'libssls' ],
@@ -30,10 +28,25 @@ Me.load({
                 }
             },
             ifdef:     [ 'ssl' ],
-            conflicts: [ 'est', 'matrixssl', 'openssl' ],
-            type:      'lib',
-            static:    true,
-            sources:   [ '*.c' ],
+            conflicts: [ 'mbedtls', 'matrixssl', 'openssl' ],
+            depends:   [ 'libmpr-nanossl' ],
+        },
+
+        'libmpr-nanossl': {
+            description:  'MPR NanoSSL Interface',
+            type:         'lib',
+            static:       true,
+            path:         '${BIN}/libmpr-nanossl${ARLIB}',
+            ifdef:        [ 'nanossl' ],
+            sources:      [ '*.c' ],
+            postresolve: `
+                let target = me.target
+                let nanossl = me.targets.nanossl
+
+                target.includes += nanossl.includes
+                target.libpaths += nanossl.libpaths
+                target.libraries += nanossl.libraries
+            `
         }
     }
 })

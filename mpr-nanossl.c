@@ -1,5 +1,5 @@
 /*
-    nanossl.c - Mocana NanoSSL
+    mpr-nanossl.c - Mocana NanoSSL
 
     This is the interface between the MPR Socket layer and the NanoSSL stack.
 
