@@ -552,14 +552,16 @@ static ssize nanoWrite(MprSocket *sp, cvoid *buf, ssize len)
     rc = 0;
     do {
         rc = sent = SSL_send(np->handle, (sbyte*) buf, (int) len);
-        mprLog("info mpr ssl nanossl", 5, "written %d, requested len %ld", sent, len);
-        if (rc <= 0) {
+        mprLog("info mpr ssl nanossl", 5, "written %d, requested len %d", sent, len);
+        if (rc < 0) {
+            return MPR_ERR_CANT_WRITE;
+        } else if (rc == 0) {
             break;
         }
         totalWritten += sent;
         buf = (void*) ((char*) buf + sent);
         len -= sent;
-        mprLog("info mpr ssl nanossl", 5, "write: len %ld, written %d, total %ld", len, sent, totalWritten);
+        mprLog("info mpr ssl nanossl", 5, "write: len %d, written %d, total %d", len, sent, totalWritten);
     } while (len > 0);
 
     SSL_sendPending(np->handle, &count);
@@ -574,7 +576,7 @@ static ssize nanoWrite(MprSocket *sp, cvoid *buf, ssize len)
 static int computeNanoCiphers(MprSsl *ssl)
 {
     NanoConfig  *cfg;
-    char        *suite, *cipher, *next;
+    char        *cipher, *next;
     int         count, cipherCode;
 
     if (ssl->ciphers) {
@@ -588,7 +590,6 @@ static int computeNanoCiphers(MprSsl *ssl)
             } else {
                 cfg->ciphers[count++] = cipherCode;
             }
-            suite = 0;
         }
         cfg->ciphersCount = count;
     }

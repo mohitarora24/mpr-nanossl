@@ -2,7 +2,7 @@
     "name": "mpr-nanossl",
     "title": "NanoSSL support",
     "description": "NanoSSL Support for the MPR",
-    "version": "0.3.3",
+    "version": "0.3.4",
     "keywords": [
         "me",
         "ssl",
