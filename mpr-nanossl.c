@@ -22,6 +22,7 @@
     - NanoSSL does not support virtual servers or multiple configurations
     - NanoSSL sometimes returns invalid ASN.1 to clients
     - This module does not support verification of client certificates
+    - This modules does not verify the peer common name
 
     Copyright (c) All Rights Reserved. See details at the end of the file.
  */
