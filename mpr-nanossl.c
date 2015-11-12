@@ -514,17 +514,18 @@ static ssize nanoRead(MprSocket *sp, void *buf, ssize len)
     if (!np->connected && (rc = nanoHandshake(sp)) <= 0) {
         return rc;
     }
-    while (1) {
-        nbytes = 0;
-        rc = SSL_recv(np->handle, buf, (sbyte4) len, &nbytes, 0);
-        mprLog("info mpr ssl nanossl", 5, "ssl_read %d", rc);
-        if (rc < 0) {
-            if (rc != ERR_TCP_READ_ERROR) {
-                sp->flags |= MPR_SOCKET_EOF;
-            }
-            nbytes = -1;
+    /*
+        The socket is non-blocking, however SSL_recv will block if no I/O event.
+        We should only come here if there is an I/O event, but for safety, set the timeout to 1 (zero blocks).
+     */
+    nbytes = 0;
+    rc = SSL_recv(np->handle, buf, (sbyte4) len, &nbytes, 1);
+    mprLog("info mpr ssl nanossl", 5, "ssl_read %d", rc);
+    if (rc < 0) {
+        if (rc != ERR_TCP_READ_ERROR) {
+            sp->flags |= MPR_SOCKET_EOF;
         }
-        break;
+        nbytes = -1;
     }
     SSL_recvPending(np->handle, &count);
     mprHiddenSocketData(sp, count, MPR_READABLE);
