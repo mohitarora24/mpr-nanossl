@@ -274,9 +274,9 @@ static void manageNanoSocket(NanoSocket *np, int flags)
         mprMark(np->sock);
 
     } else if (flags & MPR_MANAGE_FREE) {
-        if (np->handle) {
+        if (np->handle >= 0) {
             SSL_closeConnection(np->handle);
-            np->handle = 0;
+            np->handle = -1;
         }
     }
 }
@@ -289,9 +289,9 @@ static void nanoClose(MprSocket *sp, bool gracefully)
     np = sp->sslSocket;
     lock(sp);
     sp->service->standardProvider->closeSocket(sp, gracefully);
-    if (np->handle) {
+    if (np->handle >= 0) {
         SSL_closeConnection(np->handle);
-        np->handle = 0;
+        np->handle = -1;
     }
     unlock(sp);
 }
@@ -316,6 +316,7 @@ static int nanoUpgrade(MprSocket *sp, MprSsl *ssl, cchar *peerName)
         return MPR_ERR_MEMORY;
     }
     np->sock = sp;
+    np->handle = -1;
     sp->sslSocket = np;
     sp->ssl = ssl;
 
